@@ -77,10 +77,10 @@ for region in regions:
                 print("[INFO]: " + str(tag))
 
         # tag the vpc
-        for vpc in instance.vpc_id:
-            if noop == True:
-                print("[DEBUG] " + str(vpc))
-                tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex']))
-            else:
-                tag = eni.create_tags(Tags=tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex'])))
-                print("[INFO]: " + str(tag))
+#        for vpc in instance.vpc_id:
+#            if noop == True:
+#                print("[DEBUG] " + str(vpc))
+#                tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex']))
+#            else:
+#                tag = eni.create_tags(Tags=tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex'])))
+#                print("[INFO]: " + str(tag))
