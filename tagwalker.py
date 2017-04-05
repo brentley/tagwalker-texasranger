@@ -14,11 +14,37 @@ logger.setLevel(logging.DEBUG)
 from boto3.session import Session
 s = Session()
 regions = s.get_available_regions('ec2')
+#regions = ['us-west-1']
+print(str(regions))
 
 boto3.NumberRetries = 0
 boto3.Debug = 2
 # True will make the run a noop run.
 noop = False
+
+def tag_check(instance):
+    terminate=True
+    for tags in instance.tags:
+        if tags["Key"] == 'Billing':
+            terminate=False
+
+    if terminate == True:
+        print("There is no billing tag set for", instance.id, "we will terminate")
+        instance.terminate(instance.id)
+
+def set_termination_protection(instance):
+    protect=False
+    for tags in instance.tags:
+        if tags["Key"] == 'Environment':
+            if tags["Value"] == 'production':
+                print("Environment tag is set to", tags["Value"], "we will enable termination protection")
+                protect=True
+    if protect == True:
+        try:
+            print("Enabling termination protection for", instance.id)
+            instance.modify_attribute(DisableApiTermination={'Value':True})
+        except:
+            print("unable to enable termination protection for", instance.id)
 
 def tag_cleanup(instance, detail):
     tempTags=[]
@@ -49,7 +75,7 @@ def tag_cleanup(instance, detail):
         else:
             print("[INFO]: Skip Tag - " + str(t))
 
-    print("[INFO] " + str(tempTags))
+    print("[INFO]: " + str(tempTags))
     return(tempTags)
 
 for region in regions:
@@ -58,23 +84,44 @@ for region in regions:
 
     for instance in instances:
 
+        print("Processing instance", instance.id, "in region", region)
+
+        # enable termination protection
+        set_termination_protection(instance)
+
+        # check for the Billing tag
+        tag_check(instance)
+
         # tag the volumes
         for vol in instance.volumes.all():
             if noop == True:
                 print("[DEBUG] " + str(vol))
-                tag_cleanup(instance, vol.attachments[0]['Device'])
+                try:
+                    tag_cleanup(instance, vol.attachments[0]['Device'])
+                except:
+                    raise Exception
             else:
-                tag = vol.create_tags(Tags=tag_cleanup(instance, vol.attachments[0]['Device']))
-                print("[INFO]: " + str(tag))
+                try:
+                    tag = vol.create_tags(Tags=tag_cleanup(instance, vol.attachments[0]['Device']))
+                    print("[INFO]: " + str(tag))
+                except:
+                    raise Exception
 
         # tag the eni
         for eni in instance.network_interfaces:
             if noop == True:
                 print("[DEBUG] " + str(eni))
-                tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex']))
+                try:
+                    tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex']))
+                except:
+                    raise Exception
             else:
-                tag = eni.create_tags(Tags=tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex'])))
-                print("[INFO]: " + str(tag))
+                try:
+                    tag = eni.create_tags(Tags=tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex'])))
+                    print("[INFO]: " + str(tag))
+                except:
+                    raise Exception
+
 
         # tag the vpc
 #        for vpc in instance.vpc_id:
