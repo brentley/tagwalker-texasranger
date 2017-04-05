@@ -80,7 +80,8 @@ def tag_cleanup(instance, detail):
 
 for region in regions:
     ec2 = boto3.resource('ec2', region_name=str(region))
-    instances = ec2.instances.all()
+    instances = ec2.instances.filter(
+        Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped', 'stopping']}])
 
     for instance in instances:
 
