@@ -29,7 +29,7 @@ def tag_check(instance):
             terminate=False
 
     if terminate == True:
-        log.warn("there is no billing tag set for %s - we will terminate", instance.id)
+        log.warn("there is no billing tag set for %s in region %s - we will terminate", instance.id, region)
         instance.terminate(instance.id)
 
 def set_termination_protection(instance):
@@ -42,7 +42,7 @@ def set_termination_protection(instance):
 
     if protect == True:
         try:
-            log.warn("Enabling termination protection for %s", instance.id)
+            log.warn("Enabling termination protection for %s in region %s", instance.id, region)
             instance.modify_attribute(DisableApiTermination={'Value':True})
         except:
             print("unable to enable termination protection for %s", instance.id)
