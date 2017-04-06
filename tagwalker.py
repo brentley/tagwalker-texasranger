@@ -37,6 +37,7 @@ def set_termination_protection(instance):
             if tags["Value"] == 'production':
                 print("Environment tag is set to", tags["Value"], "we will enable termination protection")
                 protect=True
+
     if protect == True:
         try:
             print("Enabling termination protection for", instance.id)
@@ -107,3 +108,11 @@ for region in regions:
 #            else:
 #                tag = eni.create_tags(Tags=tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex'])))
 #                print("[INFO]: " + str(tag))
+
+# tag the elb eni
+
+# tag the efs eni
+
+# tag the rds eni
+
+# tag the nat gateway eni
