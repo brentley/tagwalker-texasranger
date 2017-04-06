@@ -15,10 +15,8 @@ from boto3.session import Session
 s = Session()
 regions = s.get_available_regions('ec2')
 #regions = ['us-west-1']
-print(str(regions))
+#print(str(regions))
 
-boto3.NumberRetries = 0
-boto3.Debug = 2
 # True will make the run a noop run.
 noop = False
 
@@ -58,24 +56,15 @@ def tag_cleanup(instance, detail):
             tempTags.append(v)
         #Set the important tags that should be written here
         elif t['Key'] == 'Billing':
-            print("[INFO]: Billing Tag " + str(t))
             tempTags.append(t)
         elif t['Key'] == 'Application':
-            print("[INFO]: Application Tag " + str(t))
             tempTags.append(t)
         elif t['Key'] == 'Environment':
-            print("[INFO]: Environment Tag " + str(t))
             tempTags.append(t)
         elif t['Key'] == 'Stack-Name':
-            print("[INFO]: Stack-Name Tag " + str(t))
             tempTags.append(t)
         elif t['Key'] == 'role':
-            print("[INFO]: role Tag " + str(t))
             tempTags.append(t)
-        else:
-            print("[INFO]: Skip Tag - " + str(t))
-
-    print("[INFO]: " + str(tempTags))
     return(tempTags)
 
 for region in regions:
@@ -95,33 +84,19 @@ for region in regions:
 
         # tag the volumes
         for vol in instance.volumes.all():
-            if noop == True:
-                print("[DEBUG] " + str(vol))
-                try:
-                    tag_cleanup(instance, vol.attachments[0]['Device'])
-                except:
-                    raise Exception
-            else:
-                try:
-                    tag = vol.create_tags(Tags=tag_cleanup(instance, vol.attachments[0]['Device']))
-                    print("[INFO]: " + str(tag))
-                except:
-                    raise Exception
+            try:
+                tag = vol.create_tags(Tags=tag_cleanup(instance, vol.attachments[0]['Device']))
+                print("[INFO]: Tagging Volume", vol.id, "with tags", str(tag))
+            except:
+                raise Exception
 
         # tag the eni
         for eni in instance.network_interfaces:
-            if noop == True:
-                print("[DEBUG] " + str(eni))
-                try:
-                    tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex']))
-                except:
-                    raise Exception
-            else:
-                try:
-                    tag = eni.create_tags(Tags=tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex'])))
-                    print("[INFO]: " + str(tag))
-                except:
-                    raise Exception
+            try:
+                tag = eni.create_tags(Tags=tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex'])))
+                print("[INFO]: Tagging Interface", eni.id, "with tags", str(tag))
+            except:
+                raise Exception
 
 
         # tag the vpc
