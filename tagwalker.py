@@ -4,8 +4,9 @@ from __future__ import print_function
 
 import json
 import boto3
-import logging
+import sys
 from tenacity import retry
+import logging
 
 # get list of ec2 regions
 
@@ -15,10 +16,12 @@ regions = s.get_available_regions('ec2')
 #regions = ['us-west-1']
 #print(str(regions))
 
-logging.basicConfig(format='%(asctime)s %(message)s')
+logging.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s',
+    level=logging.WARN,
+    stream=sys.stdout)
 
 log = logging.getLogger("TagWalker")
-log.setLevel(logging.WARN)
+log.setLevel('INFO')
 
 @retry
 
@@ -29,7 +32,7 @@ def tag_check(instance):
             terminate=False
 
     if terminate == True:
-        log.warn("there is no billing tag set for %s in region %s - we will terminate", instance.id, region)
+        log.info("there is no billing tag set for %s in region %s - we will terminate", instance.id, region)
         instance.terminate(instance.id)
 
 def set_termination_protection(instance):
@@ -37,15 +40,15 @@ def set_termination_protection(instance):
     for tags in instance.tags:
         if tags["Key"] == 'Environment':
             if tags["Value"] == 'production':
-                log.info("Environment tag is set to %s - we will enable termination protection", tags["Value"])
+                log.debug("Environment tag is set to %s - we will enable termination protection", tags["Value"])
                 protect=True
 
     if protect == True:
         try:
-            log.warn("Enabling termination protection for %s in region %s", instance.id, region)
+            log.info("Enabling termination protection for %s in region %s", instance.id, region)
             instance.modify_attribute(DisableApiTermination={'Value':True})
-        except:
-            print("unable to enable termination protection for %s", instance.id)
+        except Exception as e:
+            log.error(e)
 
 def tag_cleanup(instance, detail):
     tempTags=[]
@@ -70,14 +73,17 @@ def tag_cleanup(instance, detail):
             tempTags.append(t)
     return(tempTags)
 
+log.info("Run Starting")
+
 for region in regions:
+    log.info("Processing for region %s", region)
     ec2 = boto3.resource('ec2', region_name=str(region))
     instances = ec2.instances.filter(
         Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped', 'stopping']}])
 
     for instance in instances:
 
-        log.info("Processing instance %s in region %s", instance.id, region)
+        log.debug("Processing instance %s in region %s", instance.id, region)
 
         # enable termination protection
         set_termination_protection(instance)
@@ -89,18 +95,19 @@ for region in regions:
         for vol in instance.volumes.all():
             try:
                 tag = vol.create_tags(Tags=tag_cleanup(instance, vol.attachments[0]['Device']))
-                log.info("Tagging Volume %s with tags %s", vol.id, str(tag))
-            except:
-                raise Exception
+                log.debug("Tagging Volume %s with tags %s", vol.id, str(tag))
+            except Exception as e:
+                log.error(e)
 
         # tag the eni
         for eni in instance.network_interfaces:
             try:
                 tag = eni.create_tags(Tags=tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex'])))
-                log.info("Tagging Interface %s with tags %s", eni.id, str(tag))
-            except:
-                raise Exception
+                log.debug("Tagging Interface %s with tags %s", eni.id, str(tag))
+            except Exception as e:
+                log.error(e)
 
+log.info("Run Completed")
 
         # tag the vpc
 #        for vpc in instance.vpc_id:
