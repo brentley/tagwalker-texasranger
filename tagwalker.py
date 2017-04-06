@@ -5,9 +5,7 @@ from __future__ import print_function
 import json
 import boto3
 import logging
-
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
+from tenacity import retry
 
 # get list of ec2 regions
 
@@ -17,8 +15,12 @@ regions = s.get_available_regions('ec2')
 #regions = ['us-west-1']
 #print(str(regions))
 
-# True will make the run a noop run.
-noop = False
+logging.basicConfig(format='%(asctime)s %(message)s')
+
+log = logging.getLogger("TagWalker")
+log.setLevel(logging.WARN)
+
+@retry
 
 def tag_check(instance):
     terminate=True
@@ -27,7 +29,7 @@ def tag_check(instance):
             terminate=False
 
     if terminate == True:
-        print("There is no billing tag set for", instance.id, "we will terminate")
+        log.warn("there is no billing tag set for %s - we will terminate", instance.id)
         instance.terminate(instance.id)
 
 def set_termination_protection(instance):
@@ -35,15 +37,15 @@ def set_termination_protection(instance):
     for tags in instance.tags:
         if tags["Key"] == 'Environment':
             if tags["Value"] == 'production':
-                print("Environment tag is set to", tags["Value"], "we will enable termination protection")
+                log.info("Environment tag is set to %s - we will enable termination protection", tags["Value"])
                 protect=True
 
     if protect == True:
         try:
-            print("Enabling termination protection for", instance.id)
+            log.warn("Enabling termination protection for %s", instance.id)
             instance.modify_attribute(DisableApiTermination={'Value':True})
         except:
-            print("unable to enable termination protection for", instance.id)
+            print("unable to enable termination protection for %s", instance.id)
 
 def tag_cleanup(instance, detail):
     tempTags=[]
@@ -75,7 +77,7 @@ for region in regions:
 
     for instance in instances:
 
-        print("Processing instance", instance.id, "in region", region)
+        log.info("Processing instance %s in region %s", instance.id, region)
 
         # enable termination protection
         set_termination_protection(instance)
@@ -87,7 +89,7 @@ for region in regions:
         for vol in instance.volumes.all():
             try:
                 tag = vol.create_tags(Tags=tag_cleanup(instance, vol.attachments[0]['Device']))
-                print("[INFO]: Tagging Volume", vol.id, "with tags", str(tag))
+                log.info("Tagging Volume %s with tags %s", vol.id, str(tag))
             except:
                 raise Exception
 
@@ -95,7 +97,7 @@ for region in regions:
         for eni in instance.network_interfaces:
             try:
                 tag = eni.create_tags(Tags=tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex'])))
-                print("[INFO]: Tagging Interface", eni.id, "with tags", str(tag))
+                log.info("Tagging Interface %s with tags %s", eni.id, str(tag))
             except:
                 raise Exception
 
