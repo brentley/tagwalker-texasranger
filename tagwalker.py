@@ -8,6 +8,8 @@ import sys
 from tenacity import retry
 import logging
 
+# boto3.set_stream_logger('')
+
 # get list of ec2 regions
 
 from boto3.session import Session
