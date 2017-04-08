@@ -22,6 +22,9 @@ logging.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s',
     level=logging.WARN,
     stream=sys.stdout)
 
+# Really don't need to hear about connections being brought up again after server has closed it
+logging.getLogger("requests.packages.urllib3.connectionpool").setLevel(logging.WARNING)
+
 log = logging.getLogger("TagWalker")
 log.setLevel('INFO')
 
