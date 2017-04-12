@@ -15,7 +15,7 @@ import logging
 from boto3.session import Session
 s = Session()
 regions = s.get_available_regions('ec2')
-#regions = ['us-west-1']
+#regions = ['us-west-2']
 #print(str(regions))
 
 logging.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s',
@@ -54,6 +54,7 @@ def set_termination_protection(instance):
             instance.modify_attribute(DisableApiTermination={'Value':True})
         except Exception as e:
             log.error(e)
+            pass
 
 def tag_cleanup(instance, detail):
     tempTags=[]
@@ -62,9 +63,9 @@ def tag_cleanup(instance, detail):
     for t in instance.tags:
         #pull the name tag
         if t['Key'] == 'Name':
-            v['Value'] = t['Value'] + " - " + str(detail)
-            v['Key'] = 'Name'
-            tempTags.append(v)
+            #v['Value'] = t['Value'] + " - " + str(detail)
+            #v['Key'] = 'Name'
+            tempTags.append(t)
         #Set the important tags that should be written here
         elif t['Key'] == 'Billing':
             tempTags.append(t)
@@ -103,6 +104,8 @@ for region in regions:
                 log.debug("Tagging Volume %s with tags %s", vol.id, str(tag))
             except Exception as e:
                 log.error(e)
+                log.error("Error when processing Volume %s for instance %s", vol.id, instance)
+                pass
 
         # tag the eni
         for eni in instance.network_interfaces:
@@ -111,6 +114,8 @@ for region in regions:
                 log.debug("Tagging Interface %s with tags %s", eni.id, str(tag))
             except Exception as e:
                 log.error(e)
+                log.error("Error when processing Interface %s for instance %s", eni.id, instance)
+                pass
 
 log.info("Run Completed")
 
