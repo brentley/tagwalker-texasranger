@@ -32,9 +32,14 @@ log.setLevel('INFO')
 
 def tag_check(instance):
     terminate=True
-    for tags in instance.tags:
-        if tags["Key"] == 'Billing':
-            terminate=False
+    try:
+        for tags in instance.tags:
+            if tags["Key"] == 'Billing':
+                terminate=False
+    except Exception as e:
+        log.error(e)
+        log.error("Error when reading Billing key for %s", instance.id)
+        pass
 
     if terminate == True:
         log.info("there is no billing tag set for %s in region %s - we will terminate", instance.id, region)
@@ -42,11 +47,16 @@ def tag_check(instance):
 
 def set_termination_protection(instance):
     protect=False
-    for tags in instance.tags:
-        if tags["Key"] == 'Environment':
-            if tags["Value"] == 'production':
-                log.debug("Environment tag is set to %s - we will enable termination protection", tags["Value"])
-                protect=True
+    try:
+        for tags in instance.tags:
+            if tags["Key"] == 'Environment':
+                if tags["Value"] == 'production':
+                    log.debug("Environment tag is set to %s - we will enable termination protection", tags["Value"])
+                    protect=True
+    except Exception as e:
+        log.error(e)
+        log.error("Error when reading Environment key for %s", instance.id)
+        pass
 
     if protect == True:
         try:
@@ -54,6 +64,7 @@ def set_termination_protection(instance):
             instance.modify_attribute(DisableApiTermination={'Value':True})
         except Exception as e:
             log.error(e)
+            log.error("Error when setting termination protection  for %s", instance.id)
             pass
 
 def tag_cleanup(instance, detail):
@@ -91,11 +102,11 @@ for region in regions:
 
         log.debug("Processing instance %s in region %s", instance.id, region)
 
-        # enable termination protection
-        set_termination_protection(instance)
-
         # check for the Billing tag
         tag_check(instance)
+
+        # enable termination protection
+        set_termination_protection(instance)
 
         # tag the volumes
         for vol in instance.volumes.all():
