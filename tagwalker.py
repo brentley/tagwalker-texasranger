@@ -5,7 +5,7 @@ from __future__ import print_function
 import json
 import boto3
 import sys
-from tenacity import retry
+import tenacity
 import logging
 
 # boto3.set_stream_logger('')
@@ -28,8 +28,12 @@ logging.getLogger("requests.packages.urllib3.connectionpool").setLevel(logging.W
 log = logging.getLogger("TagWalker")
 log.setLevel('INFO')
 
-@retry
+retry = tenacity.retry(
+    wait=tenacity.wait_exponential(multiplier=3, max=10),
+    after=tenacity.after_log(log.error, log.error)
+)
 
+@retry
 def tag_check(instance):
     terminate=True
     try:
@@ -45,6 +49,7 @@ def tag_check(instance):
         log.info("there is no billing tag set for %s in region %s - we will terminate", instance.id, region)
         instance.terminate(instance.id)
 
+@retry
 def set_termination_protection(instance):
     protect=False
     try:
@@ -67,6 +72,7 @@ def set_termination_protection(instance):
             log.error("Error when setting termination protection  for %s", instance.id)
             pass
 
+@retry
 def tag_cleanup(instance, detail):
     tempTags=[]
     v={}
