@@ -5,21 +5,24 @@ from __future__ import print_function
 import json
 import boto3
 import sys
-import tenacity
 import logging
+import collections
 
-# boto3.set_stream_logger('')
+from collections import OrderedDict
+from time import sleep
 
+RETRY_EXCEPTIONS = ('RequestLimitExceeded',
+                    'ThrottlingException')
+                    
 # get list of ec2 regions
-
 from boto3.session import Session
 s = Session()
 regions = s.get_available_regions('ec2')
-#regions = ['us-west-2']
-#print(str(regions))
+#regions = ['us-west-1']
 
 logging.basicConfig(format='%(asctime)s: %(levelname)s: %(message)s',
     level=logging.WARN,
+    #level=logging.DEBUG, # debug here is super verbose
     stream=sys.stdout)
 
 # Really don't need to hear about connections being brought up again after server has closed it
@@ -27,63 +30,41 @@ logging.getLogger("requests.packages.urllib3.connectionpool").setLevel(logging.W
 
 log = logging.getLogger("TagWalker")
 log.setLevel('INFO')
+#log.setLevel('DEBUG') # debug is good for seeing activity
 
-retry = tenacity.retry(
-    wait=tenacity.wait_exponential(multiplier=3, max=10),
-    after=tenacity.after_log(log.error, log.error)
-)
-
-@retry
 def tag_check(instance):
-    terminate=True
-    try:
-        for tags in instance.tags:
-            if tags["Key"] == 'Billing':
-                terminate=False
-    except Exception as e:
-        log.error(e)
-        log.error("Error when reading Billing key for %s", instance.id)
-        pass
-
-    if terminate == True:
+    billing_tag = [tag['Value'] for tag in instance.tags if tag['Key'] == 'Billing']
+    if not billing_tag:
         log.info("there is no billing tag set for %s in region %s - we will terminate", instance.id, region)
-        instance.terminate(instance.id)
-
-@retry
-def set_termination_protection(instance):
-    protect=False
-    try:
-        for tags in instance.tags:
-            if tags["Key"] == 'Environment':
-                if tags["Value"] == 'production':
-                    log.debug("Environment tag is set to %s - we will enable termination protection", tags["Value"])
-                    protect=True
-    except Exception as e:
-        log.error(e)
-        log.error("Error when reading Environment key for %s", instance.id)
-        pass
-
-    if protect == True:
         try:
-            log.info("Enabling termination protection for %s in region %s", instance.id, region)
-            instance.modify_attribute(DisableApiTermination={'Value':True})
+            instance.terminate(instance.id)
         except Exception as e:
-            log.error(e)
-            log.error("Error when setting termination protection  for %s", instance.id)
+            log.debug(e)
+            log.debug("Error when terminating %s", instance.id)
             pass
 
-@retry
+def set_termination_protection(instance):
+    environment_tag = [tag['Value'] for tag in instance.tags if tag['Key'] == 'Environment' and tag['Value'] == 'production']
+    if environment_tag and not instance.spot_instance_request_id:
+        apiterm = instance.describe_attribute(Attribute='disableApiTermination')
+        apiterm = apiterm.get('DisableApiTermination')
+        apiterm = apiterm.get('Value')
+        if apiterm != True:
+            log.info("environment tag is set to production for %s in region %s - we will enable protection", instance.id, region)
+            try:
+                instance.modify_attribute(DisableApiTermination={'Value':True})
+            except Exception as e:
+                log.debug(e)
+                log.debug("Error when setting termination protection  for %s", instance.id)
+                pass
+
 def tag_cleanup(instance, detail):
     tempTags=[]
     v={}
-
-    for t in instance.tags:
-        #pull the name tag
+    log.debug("Reading tags for %s in region %s", instance.id, region)
+    for t in instance.tags: # Set the important tags that should be written here
         if t['Key'] == 'Name':
-            #v['Value'] = t['Value'] + " - " + str(detail)
-            #v['Key'] = 'Name'
             tempTags.append(t)
-        #Set the important tags that should be written here
         elif t['Key'] == 'Billing':
             tempTags.append(t)
         elif t['Key'] == 'Application':
@@ -96,59 +77,55 @@ def tag_cleanup(instance, detail):
             tempTags.append(t)
     return(tempTags)
 
-log.info("Run Starting")
+def tagwalk(region):
+        log.info("Processing for region %s", region)
+        ec2 = boto3.resource('ec2', region_name=str(region))
+        instances = ec2.instances.filter(
+            Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped', 'stopping']}])
+        retries = 0
+        for instance in instances:
+            try:
+                log.debug("Processing instance %s in region %s", instance.id, region)
+                set_termination_protection(instance) # only on production non-spot instances
+                tag_check(instance) # check for the Billing tag
 
+                for vol in instance.volumes.all():
+                    log.debug("Processing volume %s", vol.id)
+                    if vol.tags:
+                        voltags = collections.OrderedDict(vol.tags)
+                    tag = collections.OrderedDict(tag_cleanup(instance, vol.attachments[0]['Device']))
+                    if tag == voltags:
+                        log.debug("The tags on Volume %s are correct", vol.id)
+                    else:
+                        log.info("Tagging Volume %s with tags %s", vol.id, str(tag))
+                        tag = vol.create_tags(Tags=tag_cleanup(instance, vol.attachments[0]['Device']))
+
+                for interface in instance.network_interfaces:
+                    log.debug("Processing ENI %s", interface.id)
+                    tagset = collections.OrderedDict(ec2.NetworkInterface(interface.id).tag_set)
+                    tags = collections.OrderedDict(tag_cleanup(instance, "eth"+str(interface.attachment['DeviceIndex'])))
+                    if tags == tagset:
+                        log.debug("The tags on ENI %s are correct", interface.id)
+                    else:
+                        enitag = interface.create_tags(Tags=tag_cleanup(instance, "eth"+str(interface.attachment['DeviceIndex'])))
+                        log.info("Tagging Interface %s with tags %s", interface.id, str(enitag))
+            except Exception as e:
+                if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
+                    log.error(e)
+                    log.error("Error when processing instance %s in region %s", instance.id, region)
+                    pass
+                print('We hit the rate limiter... backing off... retries={}'.format(retries))
+                sleep(2 ** retries)
+                retries += 1
+
+log.info("Tagwalker Starting")
 for region in regions:
-    log.info("Processing for region %s", region)
-    ec2 = boto3.resource('ec2', region_name=str(region))
-    instances = ec2.instances.filter(
-        Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped', 'stopping']}])
+    tagwalk(region)
+log.info("Tagwalker Completed")
 
-    for instance in instances:
-
-        log.debug("Processing instance %s in region %s", instance.id, region)
-
-        # check for the Billing tag
-        tag_check(instance)
-
-        # enable termination protection
-        set_termination_protection(instance)
-
-        # tag the volumes
-        for vol in instance.volumes.all():
-            try:
-                tag = vol.create_tags(Tags=tag_cleanup(instance, vol.attachments[0]['Device']))
-                log.debug("Tagging Volume %s with tags %s", vol.id, str(tag))
-            except Exception as e:
-                log.error(e)
-                log.error("Error when processing Volume %s for instance %s", vol.id, instance)
-                pass
-
-        # tag the eni
-        for eni in instance.network_interfaces:
-            try:
-                tag = eni.create_tags(Tags=tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex'])))
-                log.debug("Tagging Interface %s with tags %s", eni.id, str(tag))
-            except Exception as e:
-                log.error(e)
-                log.error("Error when processing Interface %s for instance %s", eni.id, instance)
-                pass
-
-log.info("Run Completed")
-
-        # tag the vpc
-#        for vpc in instance.vpc_id:
-#            if noop == True:
-#                print("[DEBUG] " + str(vpc))
-#                tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex']))
-#            else:
-#                tag = eni.create_tags(Tags=tag_cleanup(instance, "eth"+str(eni.attachment['DeviceIndex'])))
-#                print("[INFO]: " + str(tag))
-
+# todo:
+# tag the vpc
 # tag the elb eni
-
 # tag the efs eni
-
 # tag the rds eni
-
 # tag the nat gateway eni

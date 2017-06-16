@@ -5,7 +5,7 @@ set -ex
 delay=300 # time in sec to delay between checks - initially set to 5 minutes, but might need adjusting.
 
 run_tagwalker-texasranger() {
-  /usr/local/bin/tagwalker-texasranger.py
+  ./tagwalker-texasranger.py
 }
 
 while true; do
