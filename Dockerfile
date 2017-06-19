@@ -1,6 +1,6 @@
 FROM python:3-alpine
 
-RUN pip install boto3 tenacity
+RUN pip install boto3 
 RUN apk --update --no-cache add \
 	bash
 
