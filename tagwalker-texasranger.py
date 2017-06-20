@@ -127,16 +127,16 @@ def tagwalk(region):
                 for vol in instance.volumes.all():
                     log.debug("Processing volume %s", vol.id)
                     if vol.tags is None:
-                            log.info("Tagging Volume %s with tags %s", vol.id, str(tag))
                             tag = vol.create_tags(Tags=tag_cleanup(instance, vol.attachments[0]['Device']))
+                            log.info("Tagging Volume %s with tags %s", vol.id, str(tag))
                     else:
                         voltags = collections.OrderedDict(vol.tags)
                         tag = collections.OrderedDict(tag_cleanup(instance, vol.attachments[0]['Device']))
                         if tag == voltags:
                             log.debug("The tags on Volume %s are correct", vol.id)
                         else:
-                            log.info("Tagging Volume %s with tags %s", vol.id, str(tag))
                             tag = vol.create_tags(Tags=tag_cleanup(instance, vol.attachments[0]['Device']))
+                            log.info("Tagging Volume %s with tags %s", vol.id, str(tag))
             except Exception as e:
                 if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
                     log.error(e)
