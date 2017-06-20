@@ -33,14 +33,13 @@ log.setLevel('INFO')
 #log.setLevel('DEBUG') # debug is good for seeing activity
 
 def tag_check(instance):
-    billing_tag = [tag['Value'] for tag in instance.tags if tag['Key'] == 'Billing']
-    if not billing_tag:
-        log.info("there is no billing tag set for %s in region %s - we will terminate", instance.id, region)
-        try:
-            instance.terminate(instance.id)
-        except Exception as e:
+    try:
+        billing_tag = [tag['Value'] for tag in instance.tags if tag['Key'] == 'Billing']
+    except Exception as e:
+        if not billing_tag:
+            log.info("there is no billing tag set for %s in region %s - we will terminate", instance.id, region)
             log.debug(e)
-            log.debug("Error when terminating %s", instance.id)
+            instance.terminate(instance.id)
             pass
 
 def set_termination_protection(instance):
