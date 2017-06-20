@@ -67,6 +67,8 @@ def tag_cleanup(instance, detail):
             tempTags.append(t)
         elif t['Key'] == 'Billing':
             tempTags.append(t)
+        elif t['Key'] == 'Department':
+            tempTags.append(t)
         elif t['Key'] == 'Application':
             tempTags.append(t)
         elif t['Key'] == 'Environment':
@@ -86,8 +88,8 @@ def tagwalk(region):
         for instance in instances:
             try:
                 log.debug("Processing instance %s in region %s", instance.id, region)
-                set_termination_protection(instance) # only on production non-spot instances
                 tag_check(instance) # check for the Billing tag
+                set_termination_protection(instance) # only on production non-spot instances
 
                 for vol in instance.volumes.all():
                     log.debug("Processing volume %s", vol.id)
@@ -115,7 +117,8 @@ def tagwalk(region):
                     log.error("Error when processing instance %s in region %s", instance.id, region)
                     pass
                 print('We hit the rate limiter... backing off... retries={}'.format(retries))
-                sleep(2 ** retries)
+                #sleep(2 ** retries)
+                sleep(5)
                 retries += 1
 
 log.info("Tagwalker Starting")
