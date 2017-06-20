@@ -6,6 +6,4 @@ node() {
         sh "./build/build.sh"
     stage 'Push'
         sh "./push/push.sh"
-    stage 'Deploy'
-        sh "./deploy/deploy.sh"
 }
