@@ -1,5 +1,5 @@
 // Job == tagwalker-texasranger_pipeline
-node() {
+node('slave') {
     stage 'Checkout'
         checkout scm
     stage 'Build'
