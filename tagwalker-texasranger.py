@@ -30,7 +30,7 @@ logging.getLogger("requests.packages.urllib3.connectionpool").setLevel(logging.W
 
 log = logging.getLogger("TagWalker")
 log.setLevel('INFO')
-log.setLevel('DEBUG') # debug is good for seeing activity
+#log.setLevel('DEBUG') # debug is good for seeing activity
 
 def tag_check(instance):
     if instance.tags is None:
@@ -49,10 +49,10 @@ def tag_check(instance):
                 pass
 
 def set_termination_protection(instance):
-    environment_dict = {}
+#    environment_dict = {}
     if instance.tags is None:
         print("No values in environment tag")
-        return environment_dict
+#        return environment_dict
     environment_tag = [tag['Value'] for tag in instance.tags if tag['Key'] == 'Environment' and tag['Value'] == 'production']
     if environment_tag and not instance.spot_instance_request_id:
         apiterm = instance.describe_attribute(Attribute='disableApiTermination')
@@ -61,8 +61,8 @@ def set_termination_protection(instance):
         if apiterm != True:
             log.info("environment tag is set to production for %s in region %s - we will enable protection", instance.id, region)
             try:
-                print("No values in enviromnent tag - nothing more to do")
-                #instance.modify_attribute(DisableApiTermination={'Value':True})
+                #print("No values in enviromnent tag - nothing more to do")
+                instance.modify_attribute(DisableApiTermination={'Value':True})
             except Exception as e:
                 log.debug(e)
                 log.debug("Error when setting termination protection  for %s", instance.id)
@@ -95,8 +95,10 @@ def tagwalk(region):
         instances = ec2.instances.filter(
             Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped', 'stopping']}])
         retries = 0
+        instance_count = 0
         for instance in instances:
             log.debug("Processing instance %s in region %s", instance.id, region)
+            instance_count += 1
             try:
                 tag_check(instance) # check for the Billing tag
             except Exception as e:
@@ -121,27 +123,31 @@ def tagwalk(region):
                 sleep(5)
                 retries += 1
 
+            try:
                 for vol in instance.volumes.all():
                     log.debug("Processing volume %s", vol.id)
-                    if vol.tags:
-                        voltags = collections.OrderedDict(vol.tags)
-                    tag = collections.OrderedDict(tag_cleanup(instance, vol.attachments[0]['Device']))
-                    if tag == voltags:
-                        log.debug("The tags on Volume %s are correct", vol.id)
-                    else:
-                        log.info("Tagging Volume %s with tags %s", vol.id, str(tag))
-                        try:
+                    if vol.tags is None:
+                            log.info("Tagging Volume %s with tags %s", vol.id, str(tag))
                             tag = vol.create_tags(Tags=tag_cleanup(instance, vol.attachments[0]['Device']))
-                        except Exception as e:
-                            if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
-                                log.error(e)
-                                log.error("Error when processing instance %s in region %s", instance.id, region)
-                                pass
-                            print('We hit the rate limiter... backing off... retries={}'.format(retries))
-                            #sleep(2 ** retries)
-                            sleep(5)
-                            retries += 1
+                    else:
+                        voltags = collections.OrderedDict(vol.tags)
+                        tag = collections.OrderedDict(tag_cleanup(instance, vol.attachments[0]['Device']))
+                        if tag == voltags:
+                            log.debug("The tags on Volume %s are correct", vol.id)
+                        else:
+                            log.info("Tagging Volume %s with tags %s", vol.id, str(tag))
+                            tag = vol.create_tags(Tags=tag_cleanup(instance, vol.attachments[0]['Device']))
+            except Exception as e:
+                if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
+                    log.error(e)
+                    log.error("Error when processing instance %s in region %s", instance.id, region)
+                    pass
+                print('We hit the rate limiter... backing off... retries={}'.format(retries))
+                #sleep(2 ** retries)
+                sleep(5)
+                retries += 1
 
+            try:
                 for interface in instance.network_interfaces:
                     log.debug("Processing ENI %s", interface.id)
                     tagset = collections.OrderedDict(ec2.NetworkInterface(interface.id).tag_set)
@@ -150,17 +156,17 @@ def tagwalk(region):
                         log.debug("The tags on ENI %s are correct", interface.id)
                     else:
                         enitag = interface.create_tags(Tags=tag_cleanup(instance, "eth"+str(interface.attachment['DeviceIndex'])))
-                        try:
-                            log.info("Tagging Interface %s with tags %s", interface.id, str(enitag))
-                        except Exception as e:
-                            if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
-                                log.error(e)
-                                log.error("Error when processing instance %s in region %s", instance.id, region)
-                                pass
-                            print('We hit the rate limiter... backing off... retries={}'.format(retries))
-                            #sleep(2 ** retries)
-                            sleep(5)
-                            retries += 1
+                        log.info("Tagging Interface %s with tags %s", interface.id, str(enitag))
+            except Exception as e:
+                if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
+                    log.error(e)
+                    log.error("Error when processing instance %s in region %s", instance.id, region)
+                    pass
+                print('We hit the rate limiter... backing off... retries={}'.format(retries))
+                #sleep(2 ** retries)
+                sleep(5)
+                retries += 1
+        log.info("Processed %s instances total", instance_count)
 
 log.info("Tagwalker Starting")
 for region in regions:
