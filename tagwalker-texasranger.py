@@ -11,9 +11,14 @@ import collections
 from collections import OrderedDict
 from time import sleep
 
+PROD_REGIONS = ('us-west-2',
+                    'us-east-2')
+
 RETRY_EXCEPTIONS = ('RequestLimitExceeded',
                     'ThrottlingException')
                     
+BACKOFF_MAX = 5
+
 # get list of ec2 regions
 from boto3.session import Session
 s = Session()
@@ -34,48 +39,84 @@ log.setLevel('INFO')
 
 def tag_check(instance):
     if instance.tags is None:
+        apiterm = instance.describe_attribute(Attribute='disableApiTermination')
+        apiterm = apiterm.get('DisableApiTermination')
+        apiterm = apiterm.get('Value')
+        if apiterm == True and region not in PROD_REGIONS:
+            try:
+                log.info("there are no tags set for %s and termination protection is enabled in region %s - we will disable protection", instance.id, region)
+                instance.modify_attribute(DisableApiTermination={'Value':False})
+            except Exception as e:
+                if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
+                    log.error(e)
+                    log.error("Error when removing termination protection for %s", instance.id)
+                    pass
+                else:
+                    sleepvalue = (2 ** min(retries, BACKOFF_MAX))
+                    log.warning("We hit the rate limiter on instance %s, %s instances processed so far... sleeping for %s seconds, retries=%s", instance.id, instance_count, sleepvalue, retries)
+                    sleep(sleepvalue)
+                    retries += 1
         log.info("there are no tags set for %s in region %s - we will terminate", instance.id, region)
         instance.terminate(instance.id)
+        return
     else:
         billing_tag = [tag['Value'] for tag in instance.tags if tag['Key'] == 'Billing']
         if not billing_tag:
+            apiterm = instance.describe_attribute(Attribute='disableApiTermination')
+            apiterm = apiterm.get('DisableApiTermination')
+            apiterm = apiterm.get('Value')
+            if apiterm == True and region not in PROD_REGIONS:
+                try:
+                    log.info("there is no billing tag set for %s and termination protection is enabled in region %s - we will disable protection", instance.id, region)
+                    instance.modify_attribute(DisableApiTermination={'Value':False})
+                except Exception as e:
+                    if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
+                        log.error(e)
+                        log.error("Error when removing termination protection for %s", instance.id)
+                        pass
+                    else:
+                        sleepvalue = (2 ** min(retries, BACKOFF_MAX))
+                        log.warning("We hit the rate limiter on instance %s, %s instances processed so far... sleeping for %s seconds, retries=%s", instance.id, instance_count, sleepvalue, retries)
+                        sleep(sleepvalue)
+                        retries += 1
             try:
                 log.info("there is no billing tag set for %s in region %s - we will terminate", instance.id, region)
                 instance.terminate(instance.id)
+                return
             except Exception as e:
                 if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
                     log.error(e)
                     log.error("Error when terminating %s", instance.id)
                     pass
                 else:
-                    sleepvalue = (2 ** min(retries, 5))
+                    sleepvalue = (2 ** min(retries, BACKOFF_MAX))
                     log.warning("We hit the rate limiter on instance %s, %s instances processed so far... sleeping for %s seconds, retries=%s", instance.id, instance_count, sleepvalue, retries)
                     sleep(sleepvalue)
                     retries += 1
 
 def set_termination_protection(instance):
     if instance.tags is None:
-        print("No values in environment tag")
         log.info("there are no tags set for %s in region %s", instance.id, region)
-    environment_tag = [tag['Value'] for tag in instance.tags if tag['Key'] == 'Environment' and tag['Value'] == 'production']
-    if environment_tag and not instance.spot_instance_request_id:
-        apiterm = instance.describe_attribute(Attribute='disableApiTermination')
-        apiterm = apiterm.get('DisableApiTermination')
-        apiterm = apiterm.get('Value')
-        if apiterm != True:
-            try:
-                log.info("environment tag is set to production for %s in region %s - we will enable protection", instance.id, region)
-                instance.modify_attribute(DisableApiTermination={'Value':True})
-            except Exception as e:
-                if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
-                    log.error(e)
-                    log.error("Error when setting termination protection  for %s", instance.id)
-                    pass
-                else:
-                    sleepvalue = (2 ** min(retries, 5))
-                    log.warning("We hit the rate limiter on instance %s, %s instances processed so far... sleeping for %s seconds, retries=%s", instance.id, instance_count, sleepvalue, retries)
-                    sleep(sleepvalue)
-                    retries += 1
+    else:
+        environment_tag = [tag['Value'] for tag in instance.tags if tag['Key'] == 'Environment' and tag['Value'] == 'production']
+        if environment_tag and not instance.spot_instance_request_id:
+            apiterm = instance.describe_attribute(Attribute='disableApiTermination')
+            apiterm = apiterm.get('DisableApiTermination')
+            apiterm = apiterm.get('Value')
+            if apiterm != True:
+                try:
+                    log.info("environment tag is set to production for %s in region %s - we will enable protection", instance.id, region)
+                    instance.modify_attribute(DisableApiTermination={'Value':True})
+                except Exception as e:
+                    if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
+                        log.error(e)
+                        log.error("Error when setting termination protection  for %s", instance.id)
+                        pass
+                    else:
+                        sleepvalue = (2 ** min(retries, BACKOFF_MAX))
+                        log.warning("We hit the rate limiter on instance %s, %s instances processed so far... sleeping for %s seconds, retries=%s", instance.id, instance_count, sleepvalue, retries)
+                        sleep(sleepvalue)
+                        retries += 1
 
 def tag_cleanup(instance, detail):
     tempTags=[]
@@ -116,7 +157,7 @@ def terminator(region):
                     log.error("Error when processing instance %s in region %s", instance.id, region)
                     pass
                 else:
-                    sleepvalue = (2 ** min(retries, 5))
+                    sleepvalue = (2 ** min(retries, BACKOFF_MAX))
                     log.warning("We hit the rate limiter on instance %s, %s instances processed so far... sleeping for %s seconds, retries=%s", instance.id, instance_count, sleepvalue, retries)
                     sleep(sleepvalue)
                     retries += 1
@@ -129,7 +170,7 @@ def terminator(region):
                     log.error("Error when processing instance %s in region %s", instance.id, region)
                     pass
                 else:
-                    sleepvalue = (2 ** min(retries, 5))
+                    sleepvalue = (2 ** min(retries, BACKOFF_MAX))
                     log.warning("We hit the rate limiter on instance %s, %s instances processed so far... sleeping for %s seconds, retries=%s", instance.id, instance_count, sleepvalue, retries)
                     sleep(sleepvalue)
                     retries += 1
@@ -165,7 +206,7 @@ def tagwalk(region):
                     log.error("Error when processing instance %s in region %s", instance.id, region)
                     pass
                 else:
-                    sleepvalue = (2 ** min(retries, 5))
+                    sleepvalue = (2 ** min(retries, BACKOFF_MAX))
                     log.warning("We hit the rate limiter on instance %s, %s instances processed so far... sleeping for %s seconds, retries=%s", instance.id, instance_count, sleepvalue, retries)
                     sleep(sleepvalue)
                     retries += 1
@@ -186,7 +227,7 @@ def tagwalk(region):
                     log.error("Error when processing instance %s in region %s", instance.id, region)
                     pass
                 else:
-                    sleepvalue = (2 ** min(retries, 5))
+                    sleepvalue = (2 ** min(retries, BACKOFF_MAX))
                     log.warning("We hit the rate limiter on instance %s, %s instances processed so far... sleeping for %s seconds, retries=%s", instance.id, instance_count, sleepvalue, retries)
                     sleep(sleepvalue)
                     retries += 1
