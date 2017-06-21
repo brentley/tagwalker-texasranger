@@ -37,6 +37,28 @@ log = logging.getLogger("TagWalker")
 log.setLevel('INFO')
 #log.setLevel('DEBUG') # debug is good for seeing activity
 
+def fleet_sweep(region):
+    retries = 0
+    log.info("Processing for region %s", region)
+    client = boto3.client('ec2', region_name=str(region))
+    sfrs = client.describe_spot_fleet_requests()
+    for requests in sfrs['SpotFleetRequestConfigs']:
+        id = requests['SpotFleetRequestId']
+        if requests['SpotFleetRequestState'] == 'cancelled_running':
+            log.info('Sweeping spot fleet request %s in state %s', id, requests['SpotFleetRequestState'])
+            try:
+                response = client.cancel_spot_fleet_requests(SpotFleetRequestIds=[id], TerminateInstances=True)
+            except Exception as e:
+                if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
+                    log.error(e)
+                    log.error("Error when removing termination protection for %s", instance.id)
+                    pass
+                else:
+                    sleepvalue = (2 ** min(retries, BACKOFF_MAX))
+                    log.warning("We hit the rate limiter on spot fleet %s, sleeping for %s seconds, retries=%s", id, sleepvalue, retries)
+                    sleep(sleepvalue)
+                    retries += 1
+
 def tag_check(instance):
     if instance.tags is None:
         apiterm = instance.describe_attribute(Attribute='disableApiTermination')
@@ -238,15 +260,17 @@ def tagwalk(region):
                         retries += 1
         log.info("Processed %s instances total", instance_count)
 
-log.info("Tagwalker Starting terminations")
-
+log.info("Tagwalker Starting fleet sweeps")
 for region in regions:
-    terminator(region)
+    fleet_sweep(region)
+
+log.info("Tagwalker Starting terminations")
+for region in regions:
+   terminator(region)
 
 log.info("Tagwalker Starting copying tags")
-
 for region in regions:
-    tagwalk(region)
+   tagwalk(region)
 
 log.info("Tagwalker Completed")
 
