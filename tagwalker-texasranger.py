@@ -16,7 +16,7 @@ PROD_REGIONS = ('us-west-2',
 
 RETRY_EXCEPTIONS = ('RequestLimitExceeded',
                     'ThrottlingException')
-                    
+
 BACKOFF_MAX = 5
 
 # get list of ec2 regions
@@ -97,6 +97,7 @@ def tag_check(instance):
 def set_termination_protection(instance):
     if instance.tags is None:
         log.info("there are no tags set for %s in region %s", instance.id, region)
+        return
     else:
         environment_tag = [tag['Value'] for tag in instance.tags if tag['Key'] == 'Environment' and tag['Value'] == 'production']
         if environment_tag and not instance.spot_instance_request_id:
@@ -175,7 +176,7 @@ def terminator(region):
                     sleep(sleepvalue)
                     retries += 1
         log.info("Processed %s instances total", instance_count)
-                
+
 def tagwalk(region):
         log.info("Processing for region %s", region)
         ec2 = boto3.resource('ec2', region_name=str(region))
@@ -186,63 +187,67 @@ def tagwalk(region):
         for instance in instances:
             log.debug("Processing instance %s in region %s", instance.id, region)
             instance_count += 1
-            try:
-                for vol in instance.volumes.all():
-                    log.debug("Processing volume %s", vol.id)
-                    if vol.tags is None:
-                            tag = vol.create_tags(Tags=tag_cleanup(instance, vol.attachments[0]['Device']))
-                            log.info("Tagging Volume %s with tags %s", vol.id, str(tag))
-                    else:
-                        voltags = collections.OrderedDict(vol.tags)
-                        tag = collections.OrderedDict(tag_cleanup(instance, vol.attachments[0]['Device']))
-                        if tag == voltags:
-                            log.debug("The tags on Volume %s are correct", vol.id)
+            if instance.tags is None:
+                log.info("there are no tags set for %s in region %s", instance.id, region)
+                return
+            else:
+                try:
+                    for vol in instance.volumes.all():
+                        log.debug("Processing volume %s", vol.id)
+                        if vol.tags is None:
+                                tag = vol.create_tags(Tags=tag_cleanup(instance, vol.attachments[0]['Device']))
+                                log.info("Tagging Volume %s with tags %s", vol.id, str(tag))
                         else:
-                            tag = vol.create_tags(Tags=tag_cleanup(instance, vol.attachments[0]['Device']))
-                            log.info("Tagging Volume %s with tags %s", vol.id, str(tag))
-            except Exception as e:
-                if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
-                    log.error(e)
-                    log.error("Error when processing instance %s in region %s", instance.id, region)
-                    pass
-                else:
-                    sleepvalue = (2 ** min(retries, BACKOFF_MAX))
-                    log.warning("We hit the rate limiter on instance %s, %s instances processed so far... sleeping for %s seconds, retries=%s", instance.id, instance_count, sleepvalue, retries)
-                    sleep(sleepvalue)
-                    retries += 1
-
-            try:
-                for interface in instance.network_interfaces:
-                    log.debug("Processing ENI %s", interface.id)
-                    tagset = collections.OrderedDict(ec2.NetworkInterface(interface.id).tag_set)
-                    tags = collections.OrderedDict(tag_cleanup(instance, "eth"+str(interface.attachment['DeviceIndex'])))
-                    if tags == tagset:
-                        log.debug("The tags on ENI %s are correct", interface.id)
+                            voltags = collections.OrderedDict(vol.tags)
+                            tag = collections.OrderedDict(tag_cleanup(instance, vol.attachments[0]['Device']))
+                            if tag == voltags:
+                                log.debug("The tags on Volume %s are correct", vol.id)
+                            else:
+                                tag = vol.create_tags(Tags=tag_cleanup(instance, vol.attachments[0]['Device']))
+                                log.info("Tagging Volume %s with tags %s", vol.id, str(tag))
+                except Exception as e:
+                    if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
+                        log.error(e)
+                        log.error("Error when processing instance %s in region %s", instance.id, region)
+                        pass
                     else:
-                        enitag = interface.create_tags(Tags=tag_cleanup(instance, "eth"+str(interface.attachment['DeviceIndex'])))
-                        log.info("Tagging Interface %s with tags %s", interface.id, str(enitag))
-            except Exception as e:
-                if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
-                    log.error(e)
-                    log.error("Error when processing instance %s in region %s", instance.id, region)
-                    pass
-                else:
-                    sleepvalue = (2 ** min(retries, BACKOFF_MAX))
-                    log.warning("We hit the rate limiter on instance %s, %s instances processed so far... sleeping for %s seconds, retries=%s", instance.id, instance_count, sleepvalue, retries)
-                    sleep(sleepvalue)
-                    retries += 1
+                        sleepvalue = (2 ** min(retries, BACKOFF_MAX))
+                        log.warning("We hit the rate limiter on instance %s, %s instances processed so far... sleeping for %s seconds, retries=%s", instance.id, instance_count, sleepvalue, retries)
+                        sleep(sleepvalue)
+                        retries += 1
+
+                try:
+                    for interface in instance.network_interfaces:
+                        log.debug("Processing ENI %s", interface.id)
+                        tagset = collections.OrderedDict(ec2.NetworkInterface(interface.id).tag_set)
+                        tags = collections.OrderedDict(tag_cleanup(instance, "eth"+str(interface.attachment['DeviceIndex'])))
+                        if tags == tagset:
+                            log.debug("The tags on ENI %s are correct", interface.id)
+                        else:
+                            enitag = interface.create_tags(Tags=tag_cleanup(instance, "eth"+str(interface.attachment['DeviceIndex'])))
+                            log.info("Tagging Interface %s with tags %s", interface.id, str(enitag))
+                except Exception as e:
+                    if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
+                        log.error(e)
+                        log.error("Error when processing instance %s in region %s", instance.id, region)
+                        pass
+                    else:
+                        sleepvalue = (2 ** min(retries, BACKOFF_MAX))
+                        log.warning("We hit the rate limiter on instance %s, %s instances processed so far... sleeping for %s seconds, retries=%s", instance.id, instance_count, sleepvalue, retries)
+                        sleep(sleepvalue)
+                        retries += 1
         log.info("Processed %s instances total", instance_count)
 
 log.info("Tagwalker Starting terminations")
 
 for region in regions:
     terminator(region)
-    
+
 log.info("Tagwalker Starting copying tags")
 
 for region in regions:
     tagwalk(region)
-    
+
 log.info("Tagwalker Completed")
 
 # todo:
