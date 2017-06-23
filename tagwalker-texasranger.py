@@ -310,6 +310,7 @@ log.info("Tagwalker Starting copying tags")
 for region in regions:
    tagwalk(region)
 
+log.info("Tagwalker Starting ENI tag walk")
 for region in regions:
     eni_tag(region)
 
