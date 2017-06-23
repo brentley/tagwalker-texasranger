@@ -318,7 +318,4 @@ log.info("Tagwalker Completed")
 
 # todo:
 # tag the vpc
-# tag the elb eni
-# tag the efs eni
 # tag the rds eni
-# tag the nat gateway eni
