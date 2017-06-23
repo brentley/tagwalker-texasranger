@@ -318,4 +318,3 @@ log.info("Tagwalker Completed")
 
 # todo:
 # tag the vpc
-# tag the rds eni
