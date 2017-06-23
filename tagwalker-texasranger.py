@@ -17,6 +17,8 @@ PROD_REGIONS = ('us-west-2',
 RETRY_EXCEPTIONS = ('RequestLimitExceeded',
                     'ThrottlingException')
 
+IMPORTANT_TAGS = ['Name', 'Billing', 'Department', 'Application', 'Environment', 'Stack-Name', 'role']
+
 BACKOFF_MAX = 5
 
 # get list of ec2 regions
@@ -58,6 +60,52 @@ def fleet_sweep(region):
                     log.warning("We hit the rate limiter on spot fleet %s, sleeping for %s seconds, retries=%s", id, sleepvalue, retries)
                     sleep(sleepvalue)
                     retries += 1
+
+def eni_tag(region):
+    retries = 0
+    interface_count = 0
+    log.info("Processing for region %s", region)
+    client = boto3.client('ec2', region_name=str(region))
+    enis = client.describe_network_interfaces()
+    ec2 = boto3.resource('ec2', region_name=str(region))
+    subnet = ec2.Subnet('id')
+    for eni in enis['NetworkInterfaces']:
+        interface_count += 1
+        eni_id = eni['NetworkInterfaceId']
+        billing_tag = [tag['Value'] for tag in eni['TagSet'] if tag['Key'] == 'Billing']
+
+        if not billing_tag:
+            try:
+                subnet = ec2.Subnet(eni['SubnetId'])
+                if subnet.tags is None:
+                    log.info("there are no subnet tags set for %s in region %s", subnet.id, region)
+                    return
+                else:
+                    subnet_tags = subnet.tags
+                    subnet_billing_tag = [tag['Value'] for tag in subnet_tags if tag['Key'] == 'Billing']
+                    log.debug("there are no tags set for %s in region %s - we will try to read from subnet tags", eni_id, region)
+                    if subnet_billing_tag:
+                        tempTags=[]
+                        v={}
+                        for tag in subnet_tags:
+                            if tag['Key'] in IMPORTANT_TAGS:
+                                tempTags.append(tag)
+                        enitag = client.create_tags(Resources=[eni_id], Tags=tempTags)
+                        log.info("We tagged %s in region %s with tags: %s", eni_id, region, tempTags)
+                    else:
+                        log.debug("There was no subnet tag found. ENI %s in region %s will remain untagged", eni_id, region)
+            except Exception as e:
+                if e.response['Error']['Code'] not in RETRY_EXCEPTIONS:
+                    log.error(e)
+                    log.error("Error when tagging interface %s", eni_id)
+                    pass
+                else:
+                    sleepvalue = (2 ** min(retries, BACKOFF_MAX))
+                    log.warning("We hit the rate limiter on interface %s, %s interfaces processed so far... sleeping for %s seconds, retries=%s", eni_id, interface_count, sleepvalue, retries)
+                    sleep(sleepvalue)
+                    retries += 1
+    log.info("Processed %s interfaces total", interface_count)
+
 
 def tag_check(instance):
     if instance.tags is None:
@@ -145,20 +193,8 @@ def tag_cleanup(instance, detail):
     tempTags=[]
     v={}
     log.debug("Reading tags for %s in region %s", instance.id, region)
-    for t in instance.tags: # Set the important tags that should be written here
-        if t['Key'] == 'Name':
-            tempTags.append(t)
-        elif t['Key'] == 'Billing':
-            tempTags.append(t)
-        elif t['Key'] == 'Department':
-            tempTags.append(t)
-        elif t['Key'] == 'Application':
-            tempTags.append(t)
-        elif t['Key'] == 'Environment':
-            tempTags.append(t)
-        elif t['Key'] == 'Stack-Name':
-            tempTags.append(t)
-        elif t['Key'] == 'role':
+    for t in instance.tags:
+        if t['Key'] in IMPORTANT_TAGS:
             tempTags.append(t)
     return(tempTags)
 
@@ -260,6 +296,8 @@ def tagwalk(region):
                         retries += 1
         log.info("Processed %s instances total", instance_count)
 
+
+
 log.info("Tagwalker Starting fleet sweeps")
 for region in regions:
     fleet_sweep(region)
@@ -271,6 +309,9 @@ for region in regions:
 log.info("Tagwalker Starting copying tags")
 for region in regions:
    tagwalk(region)
+
+for region in regions:
+    eni_tag(region)
 
 log.info("Tagwalker Completed")
 
